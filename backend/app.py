@@ -179,8 +179,85 @@ def upload_file_endpoint():
         logging.error(f"File upload process failed: {e}", exc_info=True)
         return jsonify({"error": "Could not upload file due to an internal server error."}), 500
 
-# [ The rest of your API routes for download, send, and email remain unchanged ]
-# They will be included in the final code block.
+@api.route('/download/<file_id>', methods=['GET'])
+def download_file_info(file_id):
+    file_record = File.query.filter_by(file_id=file_id).first_or_404()
+    if file_record.expiry_date < datetime.utcnow():
+        return jsonify({"error": "File has expired."}), 410
+    return jsonify({
+        "file_id": file_record.file_id, "filename": file_record.filename,
+        "requires_password": file_record.password_hash is not None,
+        "scan_status": file_record.scan_status
+    })
+
+@api.route('/download/<file_id>/request_url', methods=['POST'])
+def request_download_url(file_id):
+    file_record = File.query.filter_by(file_id=file_id).first_or_404()
+    if file_record.expiry_date < datetime.utcnow():
+        return jsonify({"error": "File has expired."}), 410
+    
+    if file_record.password_hash:
+        password = request.json.get('password')
+        if not password or not bcrypt.check_password_hash(file_record.password_hash, password):
+            return jsonify({"error": "Invalid password."}), 401
+
+    try:
+        url = s3_client.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': S3_BUCKET, 'Key': file_record.s3_key, 'ResponseContentDisposition': f'attachment; filename="{file_record.filename}"'},
+            ExpiresIn=300
+        )
+        return jsonify({"download_url": url})
+    except ClientError as e:
+        logging.error(f"S3 presigned URL generation failed: {e}")
+        return jsonify({"error": "Could not generate download link."}), 500
+
+@api.route('/send', methods=['POST'])
+def send_sms_endpoint():
+    data = request.get_json()
+    to_number, file_id = data.get('to_number'), data.get('file_id')
+    if not to_number or not file_id: return jsonify({"error": "Missing recipient number or file ID."}), 400
+    
+    formatted_number = str(to_number).strip()
+    if not formatted_number.startswith('+') and len(formatted_number) == 10 and formatted_number.isdigit():
+        formatted_number = f"+91{formatted_number}"
+
+    download_link = f"{FRONTEND_BASE_URL}/download/{file_id}"
+    message_body = f"You have received a secure file. Use this link to download: {download_link}. It expires in 24 hours."
+    
+    try:
+        twilio_client.messages.create(
+            to=formatted_number,
+            from_=os.environ.get('TWILIO_PHONE_NUMBER'),
+            body=message_body
+        )
+        return jsonify({"message": f"SMS sent successfully to {formatted_number}."})
+    except Exception as e:
+        logging.error(f"Twilio SMS failed: {e}", exc_info=True)
+        return jsonify({"error": "Failed to send SMS. Please ensure the number is valid and verified in your Twilio trial account."}), 500
+
+@api.route('/send_email', methods=['POST'])
+def send_email_endpoint():
+    data = request.get_json()
+    to_email, file_id = data.get('to_email'), data.get('file_id')
+    if not to_email or not file_id: return jsonify({"error": "Missing recipient email or file ID."}), 400
+    
+    download_link = f"{FRONTEND_BASE_URL}/download/{file_id}"
+    
+    try:
+        msg = Message(
+            "You have received a secure file",
+            sender=("Secure File Share", app.config['MAIL_USERNAME']),
+            recipients=[to_email]
+        )
+        msg.body = f"You have received a secure file. Please use the following link to download it:\n\n{download_link}\n\nThe link will expire in 24 hours."
+        mail.send(msg)
+        return jsonify({"message": f"Email sent successfully to {to_email}."})
+    except Exception as e:
+        logging.error(f"Mail sending failed: {e}", exc_info=True)
+        return jsonify({"error": "Failed to send email."}), 500
+
+# [ The Google Contacts routes would go here if you add them back ]
 
 # --- Register the Blueprint ---
 app.register_blueprint(api)
@@ -191,7 +268,7 @@ def init_db_command():
     with app.app_context():
         db.drop_all()
         db.create_all()
-    print("Initialized the database.")
+    print("Initialized the database with the S3 schema.")
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
