@@ -1,0 +1,53 @@
+# Ignore Python virtual environment
+backend/venv/
+
+# Ignore backend environment file with secrets
+backend/.env
+
+# Ignore SQLite database file if you have one
+backend/files.db
+
+# Ignore Python cache
+backend/__pycache__/
+
+# Ignore frontend node modules folder
+frontend/node_modules/
+
+# Ignore frontend environment file with secrets
+frontend/.env
+
+# Ignore frontend build folder
+frontend/build/
+
+# Ignore IDE/editor specific files
+.vscode/
+```
+
+### **Step 3: Run the Git Commands**
+
+Now, in your terminal, run these commands one by one. I have already filled in your specific repository details for you.
+
+1.  **Initialize a Git repository in your project folder:**
+    ```powershell
+    git init -b main
+    ```
+
+2.  **Add all your files for the first commit.** (The `.gitignore` file will make sure the secret and large folders are skipped).
+    ```powershell
+    git add .
+    ```
+
+3.  **Save a snapshot of your project with a message:**
+    ```powershell
+    git commit -m "Initial commit of the secure file transfer application"
+    ```
+
+4.  **Connect your local folder to your online GitHub repository:**
+    ```powershell
+    git remote add origin https://github.com/eshu1234m/secure-file-transfer.git
+    ```
+
+5.  **Finally, upload all your code to GitHub:**
+    ```powershell
+    git push -u origin main
+    
