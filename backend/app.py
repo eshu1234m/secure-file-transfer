@@ -108,13 +108,11 @@ def scan_file_and_update_db(app_context, file_id, temp_filepath):
             logging.error(f"Background scan for {file_id} failed: {e}")
             scan_status = 'failed'
         finally:
-            # Update the database with the final scan status
             file_record = File.query.filter_by(file_id=file_id).first()
             if file_record:
                 file_record.scan_status = scan_status
                 db.session.commit()
             
-            # If the file was found to be malicious, delete it from S3
             if scan_status == 'malicious' and file_record:
                 try:
                     s3_client.delete_object(Bucket=S3_BUCKET, Key=file_record.s3_key)
@@ -122,9 +120,18 @@ def scan_file_and_update_db(app_context, file_id, temp_filepath):
                 except Exception as e:
                     logging.error(f"Failed to delete malicious S3 object {file_record.s3_key}: {e}")
 
-            # Clean up the local temporary file from the server
             if os.path.exists(temp_filepath):
                 os.remove(temp_filepath)
+
+def send_email_in_background(app_context, subject, sender, recipients, body):
+    """This new function runs in a background thread to send the email."""
+    with app_context:
+        try:
+            msg = Message(subject=subject, sender=sender, recipients=recipients, body=body)
+            mail.send(msg)
+            logging.info(f"Email successfully sent to {recipients[0]}")
+        except Exception as e:
+            logging.error(f"Background email sending to {recipients[0]} failed: {e}")
 
 # --- API Routes ---
 @api.route('/upload', methods=['POST'])
@@ -138,14 +145,10 @@ def upload_file_endpoint():
     temp_filepath = os.path.join(UPLOAD_FOLDER, file_id)
 
     try:
-        # 1. Save the file to a temporary local path
         file.save(temp_filepath)
-        
-        # 2. Upload the file to S3 immediately
         with open(temp_filepath, "rb") as f:
             s3_client.upload_fileobj(f, S3_BUCKET, s3_key)
 
-        # 3. Save the file's metadata to the database with a 'pending' scan status
         password = request.form.get('password')
         password_hash = bcrypt.generate_password_hash(password).decode('utf-8') if password else None
         
@@ -157,14 +160,12 @@ def upload_file_endpoint():
         db.session.add(new_file)
         db.session.commit()
         
-        # 4. Start the long-running scan in a background thread
         scan_thread = threading.Thread(
             target=scan_file_and_update_db,
             args=(app.app_context(), file_id, temp_filepath)
         )
         scan_thread.start()
 
-        # 5. Respond to the user immediately, without waiting for the scan
         download_link = f"{FRONTEND_BASE_URL}/download/{file_id}"
         return jsonify({
             "message": "File upload successful! Scanning in the background.",
@@ -243,21 +244,20 @@ def send_email_endpoint():
     if not to_email or not file_id: return jsonify({"error": "Missing recipient email or file ID."}), 400
     
     download_link = f"{FRONTEND_BASE_URL}/download/{file_id}"
+    subject = "You have received a secure file"
+    sender = ("Secure File Share", app.config['MAIL_USERNAME'])
+    recipients = [to_email]
+    body = f"You have received a secure file. Please use the following link to download it:\n\n{download_link}\n\nThe link will expire in 24 hours."
     
-    try:
-        msg = Message(
-            "You have received a secure file",
-            sender=("Secure File Share", app.config['MAIL_USERNAME']),
-            recipients=[to_email]
-        )
-        msg.body = f"You have received a secure file. Please use the following link to download it:\n\n{download_link}\n\nThe link will expire in 24 hours."
-        mail.send(msg)
-        return jsonify({"message": f"Email sent successfully to {to_email}."})
-    except Exception as e:
-        logging.error(f"Mail sending failed: {e}", exc_info=True)
-        return jsonify({"error": "Failed to send email."}), 500
+    email_thread = threading.Thread(
+        target=send_email_in_background,
+        args=(app.app_context(), subject, sender, recipients, body)
+    )
+    email_thread.start()
 
-# [ The Google Contacts routes would go here if you add them back ]
+    return jsonify({"message": f"Email sending to {to_email} has been initiated."})
+
+# [ Google Contacts routes can be added here if needed ]
 
 # --- Register the Blueprint ---
 app.register_blueprint(api)
@@ -268,10 +268,8 @@ def init_db_command():
     with app.app_context():
         db.drop_all()
         db.create_all()
-    print("Initialized the database with the S3 schema.")
+    print("Initialized the database.")
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
-
-    
 
