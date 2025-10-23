@@ -140,13 +140,6 @@ def upload_file_endpoint():
     file = request.files['file']
     if file.filename == '': return jsonify({"error": "No selected file"}), 400
 
-    # --- THIS IS THE NEW TEST CODE ---
-    # If a file with this specific name is uploaded, simulate a malware detection.
-    if file.filename == 'trigger_malware_test.txt':
-        logging.info("Malware test file detected. Simulating a malicious scan result.")
-        return jsonify({"error": "File upload rejected: Malware detected (SIMULATED)."}), 403
-
-    # The rest of the function continues as normal for all other files...
     file_id = generate_unique_file_id()
     s3_key = f"uploads/{file_id}/{file.filename}"
     temp_filepath = os.path.join(UPLOAD_FOLDER, file_id)
@@ -180,6 +173,7 @@ def upload_file_endpoint():
             "download_link": download_link,
             "scan_status": "pending"
         }), 200
+
     except Exception as e:
         db.session.rollback()
         if os.path.exists(temp_filepath): os.remove(temp_filepath)
@@ -262,6 +256,8 @@ def send_email_endpoint():
     email_thread.start()
 
     return jsonify({"message": f"Email sending to {to_email} has been initiated."})
+
+# [ Google Contacts routes can be added here if needed ]
 
 # --- Register the Blueprint ---
 app.register_blueprint(api)
