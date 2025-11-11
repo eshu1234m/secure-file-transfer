@@ -45,7 +45,7 @@ app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')
 app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
 # --- END OF CRITICAL CHANGE ---
 
-# --- Extensions & Clients ---
+# --- Extensions & Clients --
 db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
 mail = Mail(app)
