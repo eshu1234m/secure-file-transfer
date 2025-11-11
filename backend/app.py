@@ -23,19 +23,27 @@ load_dotenv()
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
-# --- Configurations from .env ---
+# --- Configurations from .env (THIS IS THE CRITICAL CHANGE) ---
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY')
-db_url = os.environ.get('DATABASE_URL')
+
+# We are now ONLY looking for a NEW variable name to bypass caching
+# All other code will read from this one configuration
+db_url = os.environ.get('DB_URL_FIX') # <-- CHANGED FROM 'DATABASE_URL'
+if not db_url:
+    logging.critical("FATAL ERROR: DB_URL_FIX environment variable is not set.")
+    # This will intentionally cause a crash if the variable is missing
+    raise ValueError("DB_URL_FIX environment variable is not set.")
+
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 app.config['MAIL_SERVER'] = os.environ.get('MAIL_SERVER')
 app.config['MAIL_PORT'] = int(os.environ.get('MAIL_PORT', 587))
 app.config['MAIL_USE_TLS'] = os.environ.get('MAIL_USE_TLS', 'True').lower() in ['true', 'on', '1']
 app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')
 app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
+# --- END OF CRITICAL CHANGE ---
 
 # --- Extensions & Clients ---
 db = SQLAlchemy(app)
@@ -173,7 +181,6 @@ def upload_file_endpoint():
             "download_link": download_link,
             "scan_status": "pending"
         }), 200
-
     except Exception as e:
         db.session.rollback()
         if os.path.exists(temp_filepath): os.remove(temp_filepath)
@@ -247,7 +254,7 @@ def send_email_endpoint():
     subject = "You have received a secure file"
     sender = ("Secure File Share", app.config['MAIL_USERNAME'])
     recipients = [to_email]
-    body = f"You have received a secure file. Please use the following link to download it:\n\n{download_link}\n\nThe link will expire in 24 hours."
+    body = f"You have received a secure file. Use this link to download it:\n\n{download_link}\n\nThe link will expire in 24 hours."
     
     email_thread = threading.Thread(
         target=send_email_in_background,
@@ -256,8 +263,6 @@ def send_email_endpoint():
     email_thread.start()
 
     return jsonify({"message": f"Email sending to {to_email} has been initiated."})
-
-# [ Google Contacts routes can be added here if needed ]
 
 # --- Register the Blueprint ---
 app.register_blueprint(api)
@@ -272,4 +277,3 @@ def init_db_command():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
-
